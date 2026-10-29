@@ -14,8 +14,16 @@ touching command parsing, validation, or the UI.
 **Stage 1 complete** (foundation): typed command schema, deterministic
 parser, candidate lookup, validation rules, a mock Excel backend, and
 the orchestration workflow that ties them together - all covered by
-automated tests. No real Excel connection, speech recognition, or UI
-yet (Stages 2-4).
+automated tests.
+
+**Stage 2 complete** (real Microsoft Excel via xlwings):
+`src/spreadsheets/excel.py` connects to an already-open workbook (or
+opens one from a configured/explicit path - never creates a new
+workbook), reads and verifies headers, reads candidate rows, and
+writes confirmed updates straight into Excel cells using the same
+`workflow.py` orchestration from Stage 1. Verified against real Excel
+application instances (not just mocks) - see "Running the tests"
+below. No speech recognition or UI yet (Stages 3-4).
 
 ## Planned end-to-end workflow
 
@@ -92,7 +100,10 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
-All 40 Stage 1 tests pass as of this writing, covering:
+All 45 tests pass as of this writing (40 Stage 1 unit/integration
+tests against the mock backend, plus 5 Stage 2 tests that drive a
+real, temporary Microsoft Excel workbook end-to-end and are
+automatically skipped if Excel isn't installed):
 
 - Deterministic parsing of all 5 supported command types and reasonable
   spoken variations (digit-by-digit registration numbers, compound
@@ -111,8 +122,15 @@ All 40 Stage 1 tests pass as of this writing, covering:
   rejecting the write and logging the error while leaving the
   workbook unchanged, and unparseable transcripts never triggering a
   write.
+- Stage 2: connecting to a real Microsoft Excel workbook (both when
+  it's already open and when it must be opened from a configured
+  path), reading/verifying headers and candidate rows with leading
+  zeros intact, writing a confirmed score update into a live workbook
+  and re-reading it back from the cell, a missing workbook path, a
+  missing worksheet name, and a protected worksheet blocking the write
+  (with the workbook left unchanged and the error audit-logged).
 
-## Known assumptions to confirm before Stage 2
+## Known assumptions to confirm before Stage 3
 
 1. Default columns are B (registration number), C (full name), D
    (gender), E (score), header row 1 - **configurable**, but please
@@ -131,11 +149,14 @@ All 40 Stage 1 tests pass as of this writing, covering:
    you intend to speak commands, since no LLM-based intent detection is
    used in this version.
 
+6. When multiple workbooks are open in Excel simultaneously and
+   `excel.workbook_path` isn't set, the app refuses to guess which one
+   you mean and asks you to either close the extras or set the path
+   explicitly - confirm this is the behaviour you want, versus e.g.
+   always preferring the active window.
+
 ## Next steps (not yet implemented)
 
-- **Stage 2**: Connect to a real Microsoft Excel workbook via
-  `xlwings`, verify headers against configuration, and test against a
-  temporary workbook with synthetic data.
 - **Stage 3**: Local `faster-whisper` transcription plus F8
   push-to-talk audio capture.
 - **Stage 4**: Simple desktop UI (transcript, parsed command, candidate,
