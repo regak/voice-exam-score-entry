@@ -22,8 +22,17 @@ opens one from a configured/explicit path - never creates a new
 workbook), reads and verifies headers, reads candidate rows, and
 writes confirmed updates straight into Excel cells using the same
 `workflow.py` orchestration from Stage 1. Verified against real Excel
-application instances (not just mocks) - see "Running the tests"
-below. No speech recognition or UI yet (Stages 3-4).
+application instances (not just mocks).
+
+**Stage 3 complete** (local speech recognition): `src/audio/push_to_talk.py`
+captures microphone audio while F8 is held and stops reliably on
+release (empty/silent recordings and microphone errors are reported,
+never crash); `src/speech/transcriber.py` wraps `faster-whisper` for
+local transcription; `src/speech/voice_command.py` chains record ->
+transcribe -> parse into one call the future UI will use. Verified
+against a real microphone-shaped pipeline and a real `faster-whisper`
+model transcribing real synthesized speech, which correctly parsed
+into a `SetScoreCommand`. No desktop UI yet (Stage 4).
 
 ## Planned end-to-end workflow
 
@@ -53,16 +62,17 @@ confirmation.
 
 ```
 src/
-  audio/          Microphone recording and F8 push-to-talk (Stage 3)
-  speech/         Whisper transcription (Stage 3)
+  audio/          Microphone recording and F8 push-to-talk (Stage 3 - done)
+  speech/         Whisper transcription + record->transcribe->parse glue (Stage 3 - done)
   commands/       Command schema + deterministic parser (Stage 1 - done)
   candidates/     Candidate model + safe lookup (Stage 1 - done)
   validation/     Validation rules + audit log (Stage 1 - done)
-  spreadsheets/   Backend interface, mock backend (Stage 1), Excel/xlwings backend (Stage 2)
+  spreadsheets/   Backend interface, mock backend (Stage 1), Excel/xlwings backend (Stage 2 - done)
   ui/             Desktop interface (Stage 4)
   config.py       Typed configuration loader
   workflow.py     Orchestration: parse -> lookup -> validate -> confirm -> write
-  app.py          Application entry point (added in later stages)
+  app.py          Application entry point (added in Stage 4)
+scripts/          Dev helper scripts (e.g. synthetic test workbook generator)
 tests/            Unit and integration tests
 config.json       Non-secret configuration (columns, validation ranges, etc.)
 requirements.txt  Dependencies
@@ -89,10 +99,10 @@ All values are non-secret and user-editable:
   `false` by default).
 
 The actual column layout, header row, and headers of **your** workbook
-are read and verified at connection time in Stage 2 - the above are
+are read and verified at connection time (Stage 2) - the above are
 just defaults, not assumptions baked into the code.
 
-## Running the tests (Stage 1)
+## Running the tests
 
 ```bash
 python -m venv .venv
@@ -100,37 +110,55 @@ python -m venv .venv
 .venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
-All 45 tests pass as of this writing (40 Stage 1 unit/integration
-tests against the mock backend, plus 5 Stage 2 tests that drive a
-real, temporary Microsoft Excel workbook end-to-end and are
-automatically skipped if Excel isn't installed):
+All 64 tests pass as of this writing:
 
-- Deterministic parsing of all 5 supported command types and reasonable
-  spoken variations (digit-by-digit registration numbers, compound
-  number words, "mark"/"sex" synonyms, numeric-digit registration
-  numbers), plus rejection of gibberish/incomplete input.
-- Candidate lookup: exact registration match, not-found, ambiguous name
-  matches (refuses to guess), case-insensitive name matching, and the
-  distinction between differently-padded registration numbers (e.g.
-  `"0303"` vs `"00303"` are NOT treated as the same candidate).
-- Validation: score range boundaries, non-numeric scores, gender
-  synonyms/canonicalization, full-name sanity checks.
-- End-to-end workflow against a mock Excel backend: happy-path score/
+- **40 Stage 1** unit/integration tests against the mock Excel backend:
+  deterministic parsing of all 5 supported command types and
+  reasonable spoken variations (digit-by-digit registration numbers,
+  compound number words, "mark"/"sex" synonyms, numeric-digit
+  registration numbers, rejection of gibberish/incomplete input);
+  candidate lookup (exact match, not-found, ambiguous name matches
+  refused rather than guessed, case-insensitive matching, and
+  differently-padded registration numbers like `"0303"` vs `"00303"`
+  correctly NOT treated as the same candidate); validation (score
+  range boundaries, non-numeric scores, gender synonyms, full-name
+  sanity checks); and the end-to-end workflow (happy-path score/
   gender/full-name updates, invalid score rejected with nothing
-  written, ambiguous name lookup blocking an update, duplicate
-  registration numbers blocking an update, a read-only workbook
-  rejecting the write and logging the error while leaving the
-  workbook unchanged, and unparseable transcripts never triggering a
-  write.
-- Stage 2: connecting to a real Microsoft Excel workbook (both when
-  it's already open and when it must be opened from a configured
-  path), reading/verifying headers and candidate rows with leading
-  zeros intact, writing a confirmed score update into a live workbook
-  and re-reading it back from the cell, a missing workbook path, a
-  missing worksheet name, and a protected worksheet blocking the write
-  (with the workbook left unchanged and the error audit-logged).
+  written, ambiguous/duplicate matches blocking an update, a
+  read-only workbook rejecting the write and logging the error while
+  leaving the workbook unchanged, and unparseable transcripts never
+  triggering a write).
+- **5 Stage 2** tests that drive a real, temporary Microsoft Excel
+  workbook end-to-end (connecting, reading/verifying headers and
+  candidates with leading zeros intact, writing a confirmed update
+  and re-reading it from the live cell, a missing workbook, a missing
+  worksheet, and a protected worksheet blocking the write) -
+  automatically skipped if Excel isn't installed.
+- **19 Stage 3** tests: push-to-talk recording against a faked
+  microphone/keyboard (start/stop produces the right audio, stopping
+  without starting is safe, empty and silent recordings are reported
+  as failures rather than silently accepted, a microphone-open
+  failure raises a clear error, double-start is a no-op, and a full
+  F8 hold-record-release cycle against a simulated key state produces
+  audio); Whisper transcription against a faked model (happy path,
+  empty audio, silent audio, the model raising during transcription,
+  no speech detected, model-load failure, faster-whisper not
+  installed); and the record -> transcribe -> parse glue layer
+  (happy path producing a `SetScoreCommand`, and each stage's failure
+  short-circuiting before the next one runs).
 
-## Known assumptions to confirm before Stage 3
+Additionally, the full real pipeline (not mocked) was manually verified
+during development: a real `faster-whisper` "base" model loaded and
+transcribed real synthesized speech ("Candidate zero zero three zero
+three, score thirty.") into text that the deterministic parser turned
+into `SetScoreCommand(registration_number='00303', score_text='30.0')`
+- end to end, no fakes. This machine has limited free RAM (~0.5-0.9 GB
+free out of ~3.8 GB total); the `tiny`/`base` int8 CPU models load and
+run fine within that budget, which is why those sizes are the
+defaults - larger models (`small`/`medium`) have not been verified
+here and may risk out-of-memory on similarly constrained machines.
+
+## Known assumptions to confirm before Stage 4
 
 1. Default columns are B (registration number), C (full name), D
    (gender), E (score), header row 1 - **configurable**, but please
@@ -148,18 +176,26 @@ automatically skipped if Excel isn't installed):
    (or "find candidate") to appear - please confirm this matches how
    you intend to speak commands, since no LLM-based intent detection is
    used in this version.
-
 6. When multiple workbooks are open in Excel simultaneously and
    `excel.workbook_path` isn't set, the app refuses to guess which one
    you mean and asks you to either close the extras or set the path
    explicitly - confirm this is the behaviour you want, versus e.g.
    always preferring the active window.
+7. `whisper_model_size` defaults to `"base"` in config.json. On this
+   development machine RAM is tight, so `"tiny"` or `"base"` are the
+   safe choices; if your real machine has more free memory you may
+   prefer `"small"` for better accuracy, but that hasn't been tested
+   here yet.
+8. The `keyboard` package's global F8 hook was verified to work without
+   running as Administrator on this machine, but some Windows/security
+   software configurations can restrict global keyboard hooks - let us
+   know if F8 doesn't register during Stage 4 testing on your machine.
 
 ## Next steps (not yet implemented)
 
-- **Stage 3**: Local `faster-whisper` transcription plus F8
-  push-to-talk audio capture.
-- **Stage 4**: Simple desktop UI (transcript, parsed command, candidate,
-  proposed change, confirm/cancel, history).
-- **Stage 5**: Full workflow testing and polished install/launch
-  instructions.
+- **Stage 4**: Simple desktop UI showing the workbook/worksheet in use,
+  push-to-talk status, transcript, parsed command, candidate found,
+  proposed update, confirm/cancel controls, success/error messages, and
+  recent operations history.
+- **Stage 5**: Full workflow testing (including the real exam
+  workbook, once provided) and polished install/launch instructions.
