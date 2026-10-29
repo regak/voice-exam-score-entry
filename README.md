@@ -29,17 +29,29 @@ captures microphone audio while F8 is held and stops reliably on
 release (empty/silent recordings and microphone errors are reported,
 never crash); `src/speech/transcriber.py` wraps `faster-whisper` for
 local transcription; `src/speech/voice_command.py` chains record ->
-transcribe -> parse into one call the future UI will use. Verified
-against a real microphone-shaped pipeline and a real `faster-whisper`
-model transcribing real synthesized speech, which correctly parsed
-into a `SetScoreCommand`. No desktop UI yet (Stage 4).
+transcribe -> parse into one call. Verified against a real microphone-
+shaped pipeline and a real `faster-whisper` model transcribing real
+synthesized speech, which correctly parsed into a `SetScoreCommand`.
+
+**Stage 4 complete** (desktop UI): `src/ui/desktop_app.py` is a simple
+Tkinter window (no extra UI dependencies - ships with Python) showing
+the current workbook/worksheet, push-to-talk status, transcribed
+speech, parsed command, candidate found, proposed cell update,
+Confirm/Cancel controls, a success/error message, and a recent-
+operations history list. `src/app.py` is the entry point
+(`python src/app.py [config.json]`). The F8 listener runs on a
+background thread (recording and transcription block) and reports back
+to the UI thread through a thread-safe queue polled every 100ms, since
+Tkinter widgets may only be touched from the main thread. Verified by
+launching the real window against the real `config.json` and by 7
+tests driving the app's confirm/cancel/validation logic directly.
 
 ## Planned end-to-end workflow
 
 1. Open your exam workbook in Microsoft Excel.
-2. Launch this application; it connects to the already-open workbook
-   (or lets you pick a file) and reads the header row to confirm column
-   positions.
+2. Launch this application (`python src/app.py`) and click "Connect to
+   Workbook" - it attaches to the already-open workbook (or lets you
+   pick a file) and reads the header row to confirm column positions.
 3. Hold **F8** and speak a command, e.g.:
    - "Candidate zero zero three zero three, score thirty."
    - "Candidate zero zero three zero three, gender male."
@@ -49,10 +61,12 @@ into a `SetScoreCommand`. No desktop UI yet (Stage 4).
 4. Release F8. The app transcribes your speech locally (faster-whisper),
    parses it into a structured command, and looks up the candidate.
 5. If the candidate is found unambiguously and the value is valid, the
-   app shows the **old value -> new value** and asks you to confirm.
+   app shows the **old value -> new value** and asks you to confirm
+   (Confirm / Cancel buttons).
 6. On confirmation, the app writes the value into the correct Excel
-   cell and logs the change (timestamp, candidate, cell, old/new value)
-   to a local audit log. No raw audio or secrets are ever logged.
+   cell, shows a success message, adds it to Recent Operations, and
+   logs the change (timestamp, candidate, cell, old/new value) to a
+   local audit log. No raw audio or secrets are ever logged.
 
 Nothing is ever written to the workbook without an exact/unique
 candidate match, a passing validation check, and your explicit
@@ -68,10 +82,10 @@ src/
   candidates/     Candidate model + safe lookup (Stage 1 - done)
   validation/     Validation rules + audit log (Stage 1 - done)
   spreadsheets/   Backend interface, mock backend (Stage 1), Excel/xlwings backend (Stage 2 - done)
-  ui/             Desktop interface (Stage 4)
+  ui/             Desktop interface - Tkinter (Stage 4 - done)
   config.py       Typed configuration loader
   workflow.py     Orchestration: parse -> lookup -> validate -> confirm -> write
-  app.py          Application entry point (added in Stage 4)
+  app.py          Application entry point (Stage 4 - done)
 scripts/          Dev helper scripts (e.g. synthetic test workbook generator)
 tests/            Unit and integration tests
 config.json       Non-secret configuration (columns, validation ranges, etc.)
@@ -102,15 +116,25 @@ The actual column layout, header row, and headers of **your** workbook
 are read and verified at connection time (Stage 2) - the above are
 just defaults, not assumptions baked into the code.
 
-## Running the tests
+## Running the app
 
 ```bash
 python -m venv .venv
 .venv/Scripts/python.exe -m pip install -r requirements.txt
+.venv/Scripts/python.exe src/app.py
+```
+
+Open your exam workbook in Excel first, then click "Connect to
+Workbook" in the app. Hold F8, speak a command, release, and confirm
+the proposed change when it appears.
+
+## Running the tests
+
+```bash
 .venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
-All 64 tests pass as of this writing:
+All 71 tests pass as of this writing:
 
 - **40 Stage 1** unit/integration tests against the mock Excel backend:
   deterministic parsing of all 5 supported command types and
@@ -146,19 +170,41 @@ All 64 tests pass as of this writing:
   installed); and the record -> transcribe -> parse glue layer
   (happy path producing a `SetScoreCommand`, and each stage's failure
   short-circuiting before the next one runs).
+- **7 Stage 4** tests driving the real Tkinter UI logic (not just
+  widget creation): a voice result that resolves to a unique
+  candidate and valid score enables Confirm/Cancel and shows the
+  proposed update; an unrecognized transcript disables confirmation
+  and shows why; a recording failure surfaces its error message and
+  never offers confirmation; clicking Confirm writes to the backend
+  and adds a Recent Operations entry; clicking Cancel never writes;
+  and an out-of-range score is rejected with Confirm disabled and
+  nothing written.
 
 Additionally, the full real pipeline (not mocked) was manually verified
 during development: a real `faster-whisper` "base" model loaded and
 transcribed real synthesized speech ("Candidate zero zero three zero
 three, score thirty.") into text that the deterministic parser turned
 into `SetScoreCommand(registration_number='00303', score_text='30.0')`
-- end to end, no fakes. This machine has limited free RAM (~0.5-0.9 GB
-free out of ~3.8 GB total); the `tiny`/`base` int8 CPU models load and
-run fine within that budget, which is why those sizes are the
-defaults - larger models (`small`/`medium`) have not been verified
-here and may risk out-of-memory on similarly constrained machines.
+- end to end, no fakes. The real Tkinter window was also launched
+against the real `config.json` and closed cleanly. This machine has
+limited free RAM (~0.5-0.9 GB free out of ~3.8 GB total); the
+`tiny`/`base` int8 CPU Whisper models load and run fine within that
+budget, which is why those sizes are the defaults - larger models
+(`small`/`medium`) have not been verified here and may risk
+out-of-memory on similarly constrained machines.
 
-## Known assumptions to confirm before Stage 4
+**Known test environment quirk**: on this machine, creating many
+`tkinter.Tk()` instances back-to-back in one process intermittently hit
+a spurious "couldn't read init.tcl" error (looks like antivirus/file-
+locking interference, not a real Tcl/Tk problem - a single `Tk()` call
+in a fresh process always succeeds). `tests/conftest.py` pins
+`TCL_LIBRARY`/`TK_LIBRARY` and `tests/test_ui.py` retries `Tk()`
+creation and shares one root across its tests, which made the Stage 4
+UI tests deterministic (0 flaky failures in repeated runs after the
+fix). This is a test-harness workaround only; it doesn't affect the
+shipped app, which creates exactly one `Tk()` per run.
+
+## Known assumptions to confirm
 
 1. Default columns are B (registration number), C (full name), D
    (gender), E (score), header row 1 - **configurable**, but please
@@ -189,13 +235,16 @@ here and may risk out-of-memory on similarly constrained machines.
 8. The `keyboard` package's global F8 hook was verified to work without
    running as Administrator on this machine, but some Windows/security
    software configurations can restrict global keyboard hooks - let us
-   know if F8 doesn't register during Stage 4 testing on your machine.
+   know if F8 doesn't register on your machine.
+9. The push-to-talk listener loop restarts automatically after each
+   complete command (record -> transcribe -> parse), so you can speak
+   multiple commands in sequence without restarting the app - please
+   confirm this matches the interaction you want, versus e.g. a single
+   explicit "listen" button per command.
 
 ## Next steps (not yet implemented)
 
-- **Stage 4**: Simple desktop UI showing the workbook/worksheet in use,
-  push-to-talk status, transcript, parsed command, candidate found,
-  proposed update, confirm/cancel controls, success/error messages, and
-  recent operations history.
-- **Stage 5**: Full workflow testing (including the real exam
-  workbook, once provided) and polished install/launch instructions.
+- **Stage 5**: Full workflow testing against your real exam workbook
+  (once provided, with real data kept out of version control per
+  `.gitignore`), and polished install/launch instructions based on
+  whatever issues show up against real data and real F8 usage.
