@@ -46,6 +46,44 @@ Tkinter widgets may only be touched from the main thread. Verified by
 launching the real window against the real `config.json` and by 7
 tests driving the app's confirm/cancel/validation logic directly.
 
+**Stage 5 in progress** (real workbook testing): tested against your
+actual exam workbook (`Demo.xlsx`, 190 real candidates), which exposed
+real-world differences from the original assumptions, now handled:
+
+- **Header row is 6, not 1** (rows 1-5 are title/exam metadata) - fixed
+  via `config.json`'s `excel.header_row`, no code change needed; this
+  is exactly what that setting is for.
+- **Registration numbers have a year-department prefix** (e.g.
+  `"2025-04-00303"`), not plain digits. Added a suffix-matching
+  fallback (`src/candidates/lookup.py`): if a spoken registration
+  number (e.g. "00303") doesn't exactly match any candidate, it is
+  tried as a suffix of each candidate's digits-only registration
+  number, and only accepted if exactly one candidate matches -
+  otherwise it's refused as ambiguous, same as any other ambiguity.
+- **Full names are stored "LASTNAME, FIRSTNAME MIDDLENAME"**, but
+  commands are spoken in natural order. Added a word-order-independent
+  fallback to `find_by_full_name`: if there's no exact match, names
+  are compared as a set of words regardless of order and commas,
+  again only accepted on a unique match.
+- **Gender is stored as `"M"`/`"F"`**, not the word "male"/"female".
+  Fixed by setting `accepted_genders` canonical keys to `"M"`/`"F"` in
+  the real workbook's config, so a spoken "male" validates and writes
+  back `"M"` - preserving the sheet's existing convention instead of
+  silently rewriting it to a different format.
+- **A trailing summary row** (`"-", "-", "-", "AVERAGE", ...`) follows
+  the 190 real candidates. `read_candidates()` now skips any row whose
+  registration-number cell has no digits at all, instead of
+  misreading it as a malformed 191st candidate.
+
+All of this was verified against a disposable **copy** of the real
+workbook (never the original) running real score and gender updates
+through the real `apply_update()` and reading the written values back
+from the live Excel cells. The real `Demo.xlsx` itself was only ever
+opened read-only through the real app's "Connect to Workbook" button
+(loaded all 190 candidates correctly) and its MD5 hash was confirmed
+unchanged before and after. A timestamped backup of the original file
+was also made before any of this testing began.
+
 ## Planned end-to-end workflow
 
 1. Open your exam workbook in Microsoft Excel.
@@ -59,7 +97,9 @@ tests driving the app's confirm/cancel/validation logic directly.
    - "Find candidate zero zero three zero three."
    - "Find candidate Ally Awadhi."
 4. Release F8. The app transcribes your speech locally (faster-whisper),
-   parses it into a structured command, and looks up the candidate.
+   parses it into a structured command, and looks up the candidate -
+   using an exact match first, then falling back to a registration-
+   number suffix or name-word-order match if that's unique.
 5. If the candidate is found unambiguously and the value is valid, the
    app shows the **old value -> new value** and asks you to confirm
    (Confirm / Cancel buttons).
@@ -114,7 +154,10 @@ All values are non-secret and user-editable:
 
 The actual column layout, header row, and headers of **your** workbook
 are read and verified at connection time (Stage 2) - the above are
-just defaults, not assumptions baked into the code.
+just defaults, not assumptions baked into the code. A copy of this
+file customized for a specific real workbook (e.g. `config.demo.json`
+pointing at a real local path with `header_row: 6`) is excluded from
+git via `.gitignore` since it may reference real local data.
 
 ## Running the app
 
@@ -134,24 +177,25 @@ the proposed change when it appears.
 .venv/Scripts/python.exe -m pytest tests/ -v
 ```
 
-All 71 tests pass as of this writing:
+All 77 tests pass as of this writing:
 
-- **40 Stage 1** unit/integration tests against the mock Excel backend:
-  deterministic parsing of all 5 supported command types and
-  reasonable spoken variations (digit-by-digit registration numbers,
-  compound number words, "mark"/"sex" synonyms, numeric-digit
+- **46 Stage 1 (+6 from Stage 5)** unit/integration tests against the
+  mock Excel backend: deterministic parsing of all 5 supported command
+  types and reasonable spoken variations (digit-by-digit registration
+  numbers, compound number words, "mark"/"sex" synonyms, numeric-digit
   registration numbers, rejection of gibberish/incomplete input);
   candidate lookup (exact match, not-found, ambiguous name matches
-  refused rather than guessed, case-insensitive matching, and
-  differently-padded registration numbers like `"0303"` vs `"00303"`
-  correctly NOT treated as the same candidate); validation (score
-  range boundaries, non-numeric scores, gender synonyms, full-name
-  sanity checks); and the end-to-end workflow (happy-path score/
-  gender/full-name updates, invalid score rejected with nothing
-  written, ambiguous/duplicate matches blocking an update, a
-  read-only workbook rejecting the write and logging the error while
-  leaving the workbook unchanged, and unparseable transcripts never
-  triggering a write).
+  refused rather than guessed, case-insensitive matching; plus the
+  Stage-5 suffix-matching and word-order-independent fallbacks added
+  for real-world registration/name formats, each verified both for
+  the happy path and for refusing an ambiguous fallback match rather
+  than guessing); validation (score range boundaries, non-numeric
+  scores, gender synonyms, full-name sanity checks); and the
+  end-to-end workflow (happy-path score/gender/full-name updates,
+  invalid score rejected with nothing written, ambiguous/duplicate
+  matches blocking an update, a read-only workbook rejecting the
+  write and logging the error while leaving the workbook unchanged,
+  and unparseable transcripts never triggering a write).
 - **5 Stage 2** tests that drive a real, temporary Microsoft Excel
   workbook end-to-end (connecting, reading/verifying headers and
   candidates with leading zeros intact, writing a confirmed update
@@ -241,10 +285,19 @@ shipped app, which creates exactly one `Tk()` per run.
    multiple commands in sequence without restarting the app - please
    confirm this matches the interaction you want, versus e.g. a single
    explicit "listen" button per command.
+10. Real-world lookup fallbacks (registration-number suffix matching,
+    name word-order matching) only activate when there's no exact
+    match, and only succeed when exactly one candidate matches the
+    fallback - any ambiguity is refused rather than guessed, same as
+    exact matching. If your workbook has registration numbers whose
+    suffixes collide across different prefixes (e.g. two candidates
+    both ending in "00303" from different years), those specific
+    lookups will correctly come back ambiguous and need you to supply
+    more of the registration number.
 
 ## Next steps (not yet implemented)
 
-- **Stage 5**: Full workflow testing against your real exam workbook
-  (once provided, with real data kept out of version control per
-  `.gitignore`), and polished install/launch instructions based on
-  whatever issues show up against real data and real F8 usage.
+- **Stage 5 remaining**: real F8-and-voice (not just scripted) usage
+  against the real workbook, to catch anything that only shows up with
+  an actual microphone and your actual speaking cadence/accent;
+  polishing install/launch instructions based on whatever comes up.

@@ -30,3 +30,8 @@ recordings/
 .vscode/
 *.swp
 test_data/
+
+# Machine-specific config pointing at a real/local workbook - never
+# commit (contains a real local file path, possibly real candidate data)
+config.demo.json
+config.local.json

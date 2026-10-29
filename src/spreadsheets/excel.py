@@ -123,15 +123,27 @@ class ExcelBackend(SpreadsheetBackend):
             data_start_row = self._header_row + 1
             # Find the last used row by scanning the registration-number
             # column; stop at the first fully-empty row to avoid
-            # sweeping the entire 1M-row sheet.
+            # sweeping the entire 1M-row sheet. Rows whose "registration
+            # number" cell has no digits at all (e.g. a trailing
+            # summary/average row using "-" as a placeholder) are
+            # skipped rather than treated as a malformed candidate -
+            # they are not blank, but they are clearly not real
+            # candidate rows either.
             candidates: List[Candidate] = []
             row = data_start_row
             empty_streak = 0
             max_empty_streak = 5  # tolerate a few blank rows, then stop
             while empty_streak < max_empty_streak:
                 reg_value = self._read_raw(row, reg_col)
-                if reg_value is None or str(reg_value).strip() == "":
+                reg_str = "" if reg_value is None else str(reg_value).strip()
+                if reg_str == "":
                     empty_streak += 1
+                    row += 1
+                    continue
+                if not any(ch.isdigit() for ch in reg_str):
+                    # Non-candidate row (e.g. "-" / "AVERAGE" summary
+                    # row). Don't count it as empty (so we don't stop
+                    # scanning early if real rows follow), just skip it.
                     row += 1
                     continue
                 empty_streak = 0
