@@ -1,0 +1,31 @@
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python artifacts
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Logs (may contain candidate data - never commit)
+logs/
+*.log
+
+# Secrets / credentials
+*.env
+.env
+credentials.json
+secrets.json
+
+# Local exam data - never commit real candidate workbooks or audio
+*.xlsx
+*.xls
+!tests/fixtures/*.xlsx
+recordings/
+*.wav
+
+# OS / editor
+.DS_Store
+.vscode/
+*.swp

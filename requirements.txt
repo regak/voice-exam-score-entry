@@ -1,0 +1,13 @@
+# Core
+xlwings>=0.31
+
+# Speech recognition (Stage 3)
+faster-whisper>=1.0
+sounddevice>=0.4
+numpy>=1.26
+
+# Push-to-talk key detection (Stage 3)
+keyboard>=0.13
+
+# Testing
+pytest>=8.0

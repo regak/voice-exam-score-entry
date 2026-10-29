@@ -1,0 +1,35 @@
+{
+  "excel": {
+    "workbook_path": null,
+    "worksheet_name": null,
+    "header_row": 1,
+    "columns": {
+      "registration_number": "B",
+      "full_name": "C",
+      "gender": "D",
+      "score": "E"
+    },
+    "treat_registration_number_as_text": true
+  },
+  "validation": {
+    "score_min": 0,
+    "score_max": 60,
+    "accepted_genders": {
+      "male": ["male", "m", "boy", "man"],
+      "female": ["female", "f", "girl", "woman"]
+    }
+  },
+  "speech": {
+    "whisper_model_size": "base",
+    "language": "en",
+    "push_to_talk_key": "F8",
+    "sample_rate": 16000
+  },
+  "confirmation": {
+    "require_confirmation": true
+  },
+  "audit_log": {
+    "path": "logs/audit_log.jsonl",
+    "store_raw_audio": false
+  }
+}
